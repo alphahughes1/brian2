@@ -157,7 +157,6 @@ def test_openmp_consistency():
     previous_device = get_device()
     n_cells = 100
     n_recorded = 10
-    numpy.random.seed(42)
     taum = 20 * ms
     taus = 5 * ms
     Vt = -50 * mV
@@ -172,6 +171,13 @@ def test_openmp_consistency():
     dApost *= 0.1 * gmax
     dApre *= 0.1 * gmax
 
+    eqs = Equations(
+        """
+        dv/dt = (g-(v-El))/taum : volt
+        dg/dt = -g/taus         : volt
+        """
+    )
+    numpy.random.seed(42)
     connectivity = numpy.random.randn(n_cells, n_cells)
     sources = numpy.random.randint(0, n_cells - 1, 10 * n_cells)
     # Only use one spike per time step (to rule out that a single source neuron
@@ -181,13 +187,6 @@ def test_openmp_consistency():
         * ms
     )
     v_init = Vr + numpy.random.rand(n_cells) * (Vt - Vr)
-
-    eqs = Equations(
-        """
-        dv/dt = (g-(v-El))/taum : volt
-        dg/dt = -g/taus         : volt
-        """
-    )
 
     results = {}
 
@@ -200,6 +199,7 @@ def test_openmp_consistency():
         (4, "cpp_standalone"),
     ]:
         set_device(devicename, build_on_run=False, with_output=False)
+        # clear all instances
         Synapses.__instances__().clear()
         if devicename == "cpp_standalone":
             reinit_and_delete()
@@ -208,13 +208,13 @@ def test_openmp_consistency():
             n_cells, model=eqs, threshold="v>Vt", reset="v=Vr", refractory=5 * ms
         )
         Q = SpikeGeneratorGroup(n_cells, sources, times)
-        P.v = v_init
+        P.v = v_init.copy()  # Use copy to avoid reference issues
         P.g = 0 * mV
         S = Synapses(
             P,
             P,
             model="""
-            dApre/dt=-Apre/taupre    : 1 (event-driven)    
+            dApre/dt=-Apre/taupre    : 1 (event-driven)
             dApost/dt=-Apost/taupost : 1 (event-driven)
             w                        : 1
             """,
@@ -247,11 +247,12 @@ def test_openmp_consistency():
             device.build(directory=None, with_output=False)
 
         results[n_threads, devicename] = {}
-        results[n_threads, devicename]["w"] = state_mon.w
-        results[n_threads, devicename]["v"] = v_mon.v
+        results[n_threads, devicename]["w"] = state_mon.w.copy()
+        results[n_threads, devicename]["v"] = v_mon.v.copy()
         results[n_threads, devicename]["s"] = spike_mon.num_spikes
-        results[n_threads, devicename]["r"] = rate_mon.rate[:]
+        results[n_threads, devicename]["r"] = rate_mon.rate[:].copy()
 
+    # Now run the assertions
     for key1, key2 in [
         ((0, "runtime"), (0, "cpp_standalone")),
         ((1, "cpp_standalone"), (0, "cpp_standalone")),
@@ -381,7 +382,7 @@ def test_array_cache():
     # Make sure that the array cache does not allow to use incorrectly sized
     # values to pass
     with pytest.raises(ValueError):
-        setattr(G, "w", [0, 2])
+        G.w = [0, 2]
     with pytest.raises(ValueError):
         G.w.__setitem__(slice(0, 4), [0, 2])
 
@@ -416,6 +417,21 @@ def test_run_with_debug():
     # compilation or runtime error), capturing the output is actually
     # a bit involved to get right.
     set_device("cpp_standalone", build_on_run=True, debug=True, directory=None)
+    group = NeuronGroup(1, "v: 1", threshold="False")
+    syn = Synapses(group, group, on_pre="v += 1")
+    syn.connect()
+    mon = SpikeMonitor(group)
+    run(defaultclock.dt)
+
+
+@pytest.mark.cpp_standalone
+@pytest.mark.standalone_only
+def test_run_with_clean():
+    # We just want to make sure that it works for now (there was a bug on Windows where
+    # using clean=True deleted sourcefiles.txt)
+    set_device(
+        "cpp_standalone", build_on_run=True, debug=True, clean=True, directory=None
+    )
     group = NeuronGroup(1, "v: 1", threshold="False")
     syn = Synapses(group, group, on_pre="v += 1")
     syn.connect()
@@ -576,8 +592,8 @@ def test_delete_code_data():
     results_dir = os.path.join(device.project_dir, "results")
     assert os.path.exists(results_dir) and os.path.isdir(results_dir)
     # There should be 3 files for the clock, 2 for the neurongroup (index + v),
-    # and the "last_run_info.txt" file
-    assert len(os.listdir(results_dir)) == 6
+    # as well as the default "last_run_info.txt" and "random_generator_state" files
+    assert len(os.listdir(results_dir)) == 7
     device.delete(data=True, run_args=False, code=False, directory=False)
     assert os.path.exists(results_dir) and os.path.isdir(results_dir)
     assert len(os.listdir(results_dir)) == 0
@@ -940,7 +956,7 @@ def test_change_parameter_without_recompile_dependencies():
 
     ar = np.arange(10) * 2.0
     ar.astype(G.v.dtype).tofile(os.path.join(device.project_dir, "init_values_v2.dat"))
-    device.run(run_args=[f"neurons.v=init_values_v2.dat"])
+    device.run(run_args=["neurons.v=init_values_v2.dat"])
     assert array_equal(G.v, ar * volt)
     assert array_equal(G.w, ar * 2)
 
@@ -1047,6 +1063,15 @@ def test_header_file_inclusion():
         S.run_regularly("rate_copy = rates_pre")
         run(defaultclock.dt)
     assert_allclose(S.rate_copy[:], np.arange(len(G)) * 42 * Hz)
+
+
+@pytest.mark.cpp_standalone
+@pytest.mark.standalone_only
+def test_negative_duration_in_standalone_device():
+    set_device("cpp_standalone")
+    G = NeuronGroup(1, "v:1")
+    with pytest.raises(ValueError):
+        run(-1 * second)
 
 
 if __name__ == "__main__":

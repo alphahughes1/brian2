@@ -168,6 +168,17 @@ if "logging" not in prefs.pref_register:
 
             Defaults to ``True``.""",
         ),
+        warn_for_unused_objects=BrianPreference(
+            default=True,
+            docs="""
+            Whether to display a warning when an object gets deleted without ever
+            having been included in a network. This usually indicates a
+            programming error (e.g. a function creates a `Network` and returns it,
+            but forgets to include one of the created objects), but in some cases
+            adds unwanted noise (e.g. in interactive programming in a notebook, or
+            in the test suite).
+            """,
+        ),
     )
 
 # ===============================================================================
@@ -194,7 +205,7 @@ def brian_excepthook(exc_type, exc_obj, exc_tb):
     exception.
     """
     # Do not catch Ctrl+C
-    if exc_type == KeyboardInterrupt:
+    if exc_type is KeyboardInterrupt:
         return
     logger = logging.getLogger("brian2")
     BrianLogger.exception_occured = True

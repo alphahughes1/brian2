@@ -3,7 +3,7 @@ import uuid
 import numpy as np
 import pytest
 import sympy
-from numpy.testing import assert_equal, assert_raises
+from numpy.testing import assert_equal
 
 from brian2.core.base import BrianObjectException
 from brian2.core.clocks import defaultclock
@@ -88,7 +88,7 @@ def test_variables():
     assert "not_refractory" not in G.variables and "lastspike" not in G.variables
 
     G = NeuronGroup(1, "dv/dt = -v/tau + xi*tau**-0.5: 1")
-    assert not "tau" in G.variables and "xi" in G.variables
+    assert "tau" not in G.variables and "xi" in G.variables
 
     # NeuronGroup with refractoriness
     G = NeuronGroup(1, "dv/dt = -v/(10*ms) : 1", refractory=5 * ms)
@@ -2017,9 +2017,11 @@ _random_values = {
     ),
     ("RuntimeDevice", "cython", None): (
         [0.1636023, 0.76229608, 0.74945305, 0.82121212, 0.82669968],
-        [-0.7758696, 0.13295831, 0.87360834, -1.21879122, 0.62980314],
+        # Cython uses a buffer for the random values that it gets from numpy, the
+        # values for the second call are therefore different
+        [-0.24349748, 1.1164414, -1.97421849, 1.58092889, -0.06444478],
     ),
-    ("CPPStandaloneDevice", "cython", 1): (
+    ("CPPStandaloneDevice", None, 1): (
         [0.1636023, 0.76229608, 0.74945305, 0.82121212, 0.82669968],
         [-0.7758696, 0.13295831, 0.87360834, -1.21879122, 0.62980314],
     ),
@@ -2059,7 +2061,9 @@ def test_random_values_fixed_seed_numbers():
     run(0 * ms)  # for standalone
     expected_values = _random_values.get(_config_tuple(), None)
     if expected_values is None:
-        pytest.skip("Random values not known for this configuration")
+        pytest.skip(
+            f"Random values not known for this configuration (config_tuple: {_config_tuple()})"
+        )
     assert_allclose(G.v1[::20], expected_values[0])
     assert_allclose(G.v2[::20], expected_values[1])
 
@@ -2179,6 +2183,16 @@ def test_run_regularly_dt():
     run(10 * defaultclock.dt)
     assert_allclose(G.v[:], 5)
     assert_allclose(np.diff(M.v[0]), np.tile([0, 1], 5)[:-1])
+
+
+@pytest.mark.standalone_compatible
+def test_run_at():
+    G = NeuronGroup(1, "v : 1")
+    G.run_at("v += 1", times=[0, 1, 3] * defaultclock.dt)
+    M = StateMonitor(G, "v", record=0, when="end")
+    run(4 * defaultclock.dt)
+    assert_allclose(G.v[:], 3)
+    assert_allclose(M.v[0], [1, 2, 2, 3])
 
 
 @pytest.mark.standalone_compatible
@@ -2391,6 +2405,7 @@ if __name__ == "__main__":
     test_random_vector_values()
     test_random_values_random_seed()
     test_random_values_fixed_seed()
+    test_random_values_fixed_seed_numbers()
     test_random_values_fixed_and_random()
     test_no_code()
     test_run_regularly_scheduling()

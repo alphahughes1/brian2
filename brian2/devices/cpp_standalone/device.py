@@ -14,16 +14,18 @@ import time
 import zlib
 from collections import Counter, defaultdict
 from collections.abc import Mapping
-from distutils import ccompiler
 from hashlib import md5
 
 import numpy as np
+from distutils import ccompiler
 
 from brian2.codegen.codeobject import check_compiler_kwds
 from brian2.codegen.cpp_prefs import get_compiler_and_args, get_msvc_env
 from brian2.codegen.generators.cpp_generator import c_data_type
+from brian2.core.clocks import EventClock
 from brian2.core.functions import Function
 from brian2.core.namespace import get_local_namespace
+from brian2.core.network import Network
 from brian2.core.preferences import BrianPreference, prefs
 from brian2.core.variables import (
     ArrayVariable,
@@ -88,10 +90,10 @@ prefs.register_preferences(
         """,
     ),
     extra_make_args_unix=BrianPreference(
-        default=["-j"],
+        default=[f"-j{os.cpu_count()}"],
         docs="""
         Additional flags to pass to the GNU make command on Linux/OS-X.
-        Defaults to "-j" for parallel compilation.""",
+        Defaults to "-j $(CPU_COUNT)" for parallel compilation.""",
     ),
     extra_make_args_windows=BrianPreference(
         default=[],
@@ -513,7 +515,7 @@ class CPPStandaloneDevice(Device):
                     f"Cannot set variable '{variableview.name}' "
                     "this way in standalone, try using "
                     "string expressions."
-                )
+                ) from None
             # Using the std::vector instead of a pointer to the underlying
             # data for dynamic arrays is fast enough here and it saves us some
             # additional work to set up the pointer
@@ -820,7 +822,7 @@ class CPPStandaloneDevice(Device):
                 arrayname, value, is_dynamic = args
                 size_str = f"{arrayname}.size()" if is_dynamic else f"_num_{arrayname}"
                 code = f"""
-                {openmp_pragma('static')}
+                {openmp_pragma("static")}
                 for(int i=0; i<{size_str}; i++)
                 {{
                     {arrayname}[i] = {CPPNodeRenderer().render_expr(repr(value))};
@@ -831,7 +833,7 @@ class CPPStandaloneDevice(Device):
                 arrayname, staticarrayname, is_dynamic = args
                 size_str = f"{arrayname}.size()" if is_dynamic else f"_num_{arrayname}"
                 code = f"""
-                {openmp_pragma('static')}
+                {openmp_pragma("static")}
                 for(int i=0; i<{size_str}; i++)
                 {{
                     {arrayname}[i] = {staticarrayname}[i];
@@ -845,7 +847,7 @@ class CPPStandaloneDevice(Device):
             elif func == "set_array_by_array":
                 arrayname, staticarrayname_index, staticarrayname_value = args
                 code = f"""
-                {openmp_pragma('static')}
+                {openmp_pragma("static")}
                 for(int i=0; i<_num_{staticarrayname_index}; i++)
                 {{
                     {arrayname}[{staticarrayname_index}[i]] = {staticarrayname_value}[i];
@@ -1072,9 +1074,15 @@ class CPPStandaloneDevice(Device):
         # Copy the CSpikeQueue implementation
         shutil.copy2(
             os.path.join(
-                os.path.split(inspect.getsourcefile(Synapses))[0], "cspikequeue.cpp"
+                os.path.split(inspect.getsourcefile(Synapses))[0], "spikequeue.h"
             ),
             os.path.join(directory, "brianlib", "spikequeue.h"),
+        )
+        shutil.copy2(
+            os.path.join(
+                os.path.split(inspect.getsourcefile(Synapses))[0], "spikequeue.cpp"
+            ),
+            os.path.join(directory, "brianlib", "spikequeue.cpp"),
         )
         shutil.copy2(
             os.path.join(
@@ -1257,11 +1265,14 @@ class CPPStandaloneDevice(Device):
             s = arg.split("=")
             if len(s) == 2:
                 for var in self.array_cache:
-                    if (
-                        hasattr(var.owner, "name")
-                        and var.owner.name + "." + var.name == s[0]
-                    ):
-                        self.array_cache[var] = None
+                    try:
+                        if (
+                            hasattr(var.owner, "name")
+                            and var.owner.name + "." + var.name == s[0]
+                        ):
+                            self.array_cache[var] = None
+                    except ReferenceError:
+                        pass  # Happens when ephemeral subgroups have been used to set a variable
         run_args = ["--results_dir", self.results_dir] + run_args
         # Invalidate the cached end time of the clock and network, to deal with stopped simulations
         for clock in self.clocks:
@@ -1287,15 +1298,19 @@ class CPPStandaloneDevice(Device):
                 stdout = None
             if os.name == "nt":
                 start_time = time.time()
+                Network._globally_running = True
                 x = subprocess.call(["main"] + run_args, stdout=stdout)
                 self.timers["run_binary"] = time.time() - start_time
+                Network._globally_running = False
             else:
                 run_cmd = prefs.devices.cpp_standalone.run_cmd_unix
                 if isinstance(run_cmd, str):
                     run_cmd = [run_cmd]
                 start_time = time.time()
+                Network._globally_running = True
                 x = subprocess.call(run_cmd + run_args, stdout=stdout)
                 self.timers["run_binary"] = time.time() - start_time
+                Network._globally_running = False
             if stdout is not None:
                 stdout.close()
             if x:
@@ -1568,7 +1583,9 @@ class CPPStandaloneDevice(Device):
             ensure_directory(os.path.join(directory, d))
 
         self.writer = CPPWriter(directory)
-
+        # Compile the spike queue together with the other source files
+        self.writer.source_files.add("brianlib/spikequeue.cpp")
+        self.writer.header_files.add("brianlib/spikequeue.h")
         # Get the number of threads if specified in an openmp context
         nb_threads = prefs.devices.cpp_standalone.openmp_threads
         # If the number is negative, we need to throw an error
@@ -1654,11 +1671,15 @@ class CPPStandaloneDevice(Device):
         if data:
             results_dir = self.results_dir
             logger.debug(f"Deleting data files in '{results_dir}'")
+            fnames.append(os.path.join(results_dir, "random_generator_state"))
             fnames.append(os.path.join(results_dir, "last_run_info.txt"))
             if self.profiled_codeobjects:
                 fnames.append(os.path.join(results_dir, "profiling_info.txt"))
             for var in self.arrays:
                 fnames.append(os.path.join(results_dir, self.get_array_filename(var)))
+            for syn in self.synapses:
+                for pathway in syn._pathways:
+                    fnames.append(os.path.join(results_dir, f"{pathway.name}_queue"))
 
         # Delete code
         if code:
@@ -1679,7 +1700,6 @@ class CPPStandaloneDevice(Device):
 
             fnames.extend(
                 [
-                    os.path.join("brianlib", "spikequeue.h"),
                     os.path.join("brianlib", "stdint_compat.h"),
                 ]
             )
@@ -1770,6 +1790,11 @@ class CPPStandaloneDevice(Device):
         level=0,
         **kwds,
     ):
+        if duration < 0:
+            raise ValueError(
+                f"Function 'run' expected a non-negative duration but got '{duration}'"
+            )
+
         self.networks.add(net)
         if kwds:
             logger.warn(
@@ -1873,9 +1898,7 @@ class CPPStandaloneDevice(Device):
             {
             %REPORT%
             }
-            """.replace(
-                "%REPORT%", report
-            )
+            """.replace("%REPORT%", report)
         else:
             raise TypeError(
                 "report argument has to be either 'text', "
@@ -1934,9 +1957,15 @@ class CPPStandaloneDevice(Device):
         # run)
         for clock in net._clocks:
             self.array_cache[clock.variables["timestep"]] = np.array([clock._i_end])
-            self.array_cache[clock.variables["t"]] = np.array(
-                [clock._i_end * clock.dt_]
-            )
+            # FIXME: Not ideal to condition this on the type of clock
+            if isinstance(clock, EventClock):
+                self.array_cache[clock.variables["t"]] = np.array(
+                    [clock._times[clock._i_end]]
+                )
+            else:
+                self.array_cache[clock.variables["t"]] = np.array(
+                    [clock._i_end * clock.dt_]
+                )
 
         if self.build_on_run:
             if self.has_been_run:

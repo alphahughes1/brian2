@@ -74,7 +74,7 @@ BOOLEAN = "boolean"
 # names starting with underscore should only be used internally
 IDENTIFIER = Word(
     string.ascii_letters + "_", string.ascii_letters + string.digits + "_"
-).setResultsName("identifier")
+).set_results_name("identifier")
 
 # very broad definition here, expression will be analysed by sympy anyway
 # allows for multi-line expressions, where each line can have comments
@@ -83,12 +83,12 @@ EXPRESSION = Combine(
         (CharsNotIn(":#\n") + Suppress(Optional(LineEnd()))).ignore("#" + restOfLine)
     ),
     joinString=" ",
-).setResultsName("expression")
+).set_results_name("expression")
 
 # a unit
 # very broad definition here, again. Whether this corresponds to a valid unit
 # string will be checked later
-UNIT = Word(string.ascii_letters + string.digits + "*/.- ").setResultsName("unit")
+UNIT = Word(string.ascii_letters + string.digits + "*/.- ").set_results_name("unit")
 
 # a single Flag (e.g. "const" or "event-driven")
 FLAG = Word(string.ascii_letters, string.ascii_letters + "_- " + string.digits)
@@ -96,7 +96,7 @@ FLAG = Word(string.ascii_letters, string.ascii_letters + "_- " + string.digits)
 # Flags are comma-separated and enclosed in parantheses: "(flag1, flag2)"
 FLAGS = (
     Suppress("(") + FLAG + ZeroOrMore(Suppress(",") + FLAG) + Suppress(")")
-).setResultsName("flags")
+).set_results_name("flags")
 
 ###############################################################################
 # Equations
@@ -106,20 +106,20 @@ FLAGS = (
 # x : volt (flags)
 PARAMETER_EQ = Group(
     IDENTIFIER + Suppress(":") + UNIT + Optional(FLAGS)
-).setResultsName(PARAMETER)
+).set_results_name(PARAMETER)
 
 # Static equation:
 # x = 2 * y : volt (flags)
 STATIC_EQ = Group(
     IDENTIFIER + Suppress("=") + EXPRESSION + Suppress(":") + UNIT + Optional(FLAGS)
-).setResultsName(SUBEXPRESSION)
+).set_results_name(SUBEXPRESSION)
 
 # Differential equation
 # dx/dt = -x / tau : volt
 DIFF_OP = Suppress("d") + IDENTIFIER + Suppress("/") + Suppress("dt")
 DIFF_EQ = Group(
     DIFF_OP + Suppress("=") + EXPRESSION + Suppress(":") + UNIT + Optional(FLAGS)
-).setResultsName(DIFFERENTIAL_EQUATION)
+).set_results_name(DIFFERENTIAL_EQUATION)
 
 # ignore comments
 EQUATION = (PARAMETER_EQ | STATIC_EQ | DIFF_EQ).ignore("#" + restOfLine)
@@ -158,7 +158,7 @@ def check_identifier_basic(identifier):
     # Check whether the identifier is parsed correctly -- this is always the
     # case, if the identifier results from the parsing of an equation but there
     # might be situations where the identifier is specified directly
-    parse_result = list(IDENTIFIER.scanString(identifier))
+    parse_result = list(IDENTIFIER.scan_string(identifier))
 
     # parse_result[0][0][0] refers to the matched string -- this should be the
     # full identifier, if not it is an illegal identifier like "3foo" which only
@@ -320,7 +320,7 @@ def dimensions_and_type_from_string(unit_string):
             if identifier in DEFAULT_UNITS:
                 # A known unit, but not a base unit
                 base_unit = get_unit(DEFAULT_UNITS[identifier].dim)
-                if not repr(base_unit) in _base_units:
+                if repr(base_unit) not in _base_units:
                     # Make sure that we don't suggest a unit that is not allowed
                     # (should not happen, normally)
                     base_unit = Unit(1, dim=base_unit.dim)
@@ -341,8 +341,8 @@ def dimensions_and_type_from_string(unit_string):
         evaluated_unit = eval(unit_string, _base_units)
     except Exception as ex:
         raise ValueError(
-            f"Could not interpret '{unit_string}' as a unit specification: {ex}"
-        )
+            f"Could not interpret '{unit_string}' as a unit specification."
+        ) from ex
 
     # Check whether the result is a unit
     if not isinstance(evaluated_unit, Unit):
@@ -384,7 +384,7 @@ def parse_string_equations(eqns):
     equations = {}
 
     try:
-        parsed = EQUATIONS.parseString(eqns, parseAll=True)
+        parsed = EQUATIONS.parse_string(eqns, parse_all=True)
     except ParseException as p_exc:
         raise EquationError(
             "Parsing failed: \n"
@@ -405,11 +405,10 @@ def parse_string_equations(eqns):
             dims, var_type = dimensions_and_type_from_string(eq_content["unit"])
         except ValueError as ex:
             raise EquationError(
-                "Error parsing the unit specification for "
-                f"variable '{identifier}': {ex}"
-            )
+                f"Error parsing the unit specification for variable '{identifier}'."
+            ) from ex
 
-        expression = eq_content.get("expression", None)
+        expression = eq_content.get("expression")
         if expression is not None:
             # Replace multiple whitespaces (arising from joining multiline
             # strings) with single space
@@ -714,9 +713,8 @@ class Equations(Hashable, Mapping):
                             Expression(new_code)
                         except ValueError as ex:
                             raise ValueError(
-                                'Replacing "%s" with "%r" failed: %s'
-                                % (to_replace, replacement, ex)
-                            )
+                                f"Replacing '{to_replace}' with '{replacement!r} failed."
+                            ) from ex
                 new_equations[new_varname] = SingleEquation(
                     eq.type,
                     new_varname,
@@ -1045,7 +1043,7 @@ class Equations(Hashable, Mapping):
             raise ValueError(
                 "Cannot resolve dependencies between static "
                 "equations, dependencies contain a cycle."
-            )
+            ) from None
 
         # put the equations objects in the correct order
         for order, static_variable in enumerate(sorted_eqs):
@@ -1102,7 +1100,7 @@ class Equations(Hashable, Mapping):
             raise ValueError(
                 "Cannot resolve dependencies between static "
                 "equations, dependencies contain a cycle."
-            )
+            ) from None
         # Remove the dummy entries for differential equations and rename
         # x' → x
         sorted_eqs = [
@@ -1276,11 +1274,7 @@ class Equations(Hashable, Mapping):
             else:
                 flag_str = ""
             if eq.type == PARAMETER:
-                eq_latex = r"{} &&& \text{{(unit: ${}${})}}".format(
-                    sympy.latex(lhs),
-                    sympy.latex(get_unit(eq.dim)),
-                    flag_str,
-                )
+                eq_latex = rf"{sympy.latex(lhs)} &&& \text{{(unit: ${sympy.latex(get_unit(eq.dim))}${flag_str})}}"
             else:
                 eq_latex = r"{} &= {} && \text{{(unit of ${}$: ${}${})}}".format(
                     lhs,  # already a string

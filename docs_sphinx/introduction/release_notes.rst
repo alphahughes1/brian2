@@ -1,25 +1,160 @@
 Release notes
 =============
 
-Next release
+Brian 2.10.1
 ------------
-
-Selected improvements and bug fixes
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-- A more powerful :ref:`linked_variables` mechanism, now also supporting linked variables that use another variable for indexing, and linked variables in
-  `Synapses` (:issue:`1584`).
-
-Infrastructure and documentation improvements
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-- A new example :doc:`../examples/synapses.homeostatic_stdp_at_inhibitory_synapes`, demonstrating a homoestatic modulation of STDP, based on a population firing rate.
-  Thanks to Paul Brodersen for contributing this example (:issue:`1581`).
+This release fixes a bug, where the names of clocks in `~.Group.run_regularly` and
+`~.Group.run_at` where not necessarily unique, leading to build failures in C++ standalone mode
+(:issue:`1742`).
 
 Contributions
 ~~~~~~~~~~~~~
 GitHub code, documentation, and issue contributions (ordered by the number of
 contributions):
 
-TODO
+* Marcel Stimberg (`@mstimberg <https://github.com/mstimberg>`_)
+
+
+Brian 2.10.0
+------------
+New features
+~~~~~~~~~~~~
+- `PopulationRateMonitor` and `SpikeMonitor` now have a unified interface where both can provide
+  smoothed and binned firing rates with `~.RateMonitor.smooth_rate` and
+  `~.RateMonitor.binned_rate` (:issue:`1657`). Thanks to Mrigesh Thakur for implementing this
+  feature.
+- Supplementing `Group.run_regularly` (which runs code at regular intervals), there is now a
+  `Group.run_at` method to run code at specific time points. Under the hood, it uses a new
+  `EventClock`, which can also be used directly, e.g. in a `StateMonitor` to record values
+  at specific times (:issue:`1602`). Thanks to Samuele De Cristofaro for implementing this
+  feature.
+
+Selected improvements and bug fixes
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+- The ``run_args`` feature could lead to a `ReferenceError` in some situations (:issue:`1673`).
+  Thanks to Lucas Binder for making us aware of this issue.
+- The support for the GNU Scientific Library (GSL) was broken in C++ standalone mode
+  (:issue:`1687`), and another bug in our test suite meant that this problem stayed undetected.
+  Thanks to Maurizio De Pitta for making us aware of this issue.
+- Time measurements (for profiling and for the progress report) were adding significant overhead
+  in C++ standalone mode, and measured processor instead of wall time (:issue:`1718`).
+  Thanks to Mathias Cauwet for contributing to the understanding of this issue.
+- The ``.device.build(...clean=True)`` functionality was broken on Windows (:issue:`1721`).
+  Thanks to Daniel Müller-Komorowska for making us aware of the issue.
+- The `~.Network.store`/`~.Network.restore` mechanism did not take into account synaptic delays
+  (:issue:`1726`).
+- In C++ standalone mode, the default argument for ``make`` on Linux/macOS is no longer ``make -j``,
+  but instead uses the number of CPUs. This avoids using all system resources for big simulations,
+  trying to compile too many files in parallel (:issue:`1727`).
+- Fewer spurious "unused object" warnings (:issue:`1724`).
+- Restoring from disk now works regardless of whether the simulation used the Python or Cython
+  version of the spike queue (:issue:`1688`). Thanks to Mrigesh Thakur for contributing this fix.
+
+Infrastructure and documentation improvements
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+- We've switched our code-formatting and liniting used for pre-commit hooks to
+  `ruff <https://docs.astral.sh/ruff/>`_, which reduces the number of dependencies and makes
+  the pre-commit checks faster (:issue:`1712`).
+- To be in line with the major packages in the scientific Python ecosystem, we now also follow the
+  `SPEC-0 <https://scientific-python.org/specs/spec-0000/>`_ policy for minimum dependencies
+  (:issue:`1700`).
+- Various updates to out GitHub actions for testing and package building, making them more secure,
+  robust and faster due to better use of caches.
+- The Python fallback for the spike queue has been removed, the Cython version is now mandatory.
+  The underlying C++ implementation is now used directly from within the Cython code
+  (:issue:`1649`, :issue:`1643`). Thanks to Mrigesh Thakur for his work on this, as
+  part of this year's Google Summer of Code.
+- Dynamic arrays are now always using a C++ implementation, instead of having separate
+  implementations in runtime and standalone mode (:issue:`1650`). Thanks to Mrigesh Thakur for this
+  contribution.
+- Random number and SpikeQueue state are now written to disk at the end of a standalone simulation,
+  preparing a feature to continue previous simulations (:issue:`1720`).
+
+Backwards-incompatible changes
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Due to the removal of the Python fallback for the spike queue, and the use of a compiled
+dynamic array in runtime mode, Brian can no longer run directly from its source directory without
+installation. If you downloaded the source code (or cloned the git repository), you will therefore
+have to install the package before using it; having the ``PYTHONPATH`` point to the source directory
+is no longer sufficient. During development, you can use an
+`editable install <https://setuptools.pypa.io/en/latest/userguide/development_mode.html>`_ to avoid
+having to repeat the installation after each change. Note that this does not affect users that
+install Brian in the usual way (e.g. with ``pip`` or ``conda``). This change only concerns
+developers working on the source code directly.
+
+Contributions
+~~~~~~~~~~~~~
+GitHub code, documentation, and issue contributions (ordered by the number of
+contributions):
+
+* Marcel Stimberg (`@mstimberg <https://github.com/mstimberg>`_)
+* Mrigesh Thakur (`@Legend101Zz <https://github.com/Legend101Zz>`_)
+* Ayush  (`@ayush4874 <https://github.com/ayush4874>`_)
+* Samuele De Cristofaro (`@De-Cri <https://github.com/De-Cri>`_)
+* Dan Goodman (`@thesamovar <https://github.com/thesamovar>`_)
+* `@itu-itis21-nguyen21 <https://github.com/itu-itis21-nguyen21>`_
+* Mohamed Abidalrekab (`@abidalrekab <https://github.com/abidalrekab>`_)
+* Silviya (`@silviyahasana <https://github.com/silviyahasana>`_)
+* Guy Singer (`@guy-singer <https://github.com/guy-singer>`_)
+* Liam Keegan (`@lkeegan <https://github.com/lkeegan>`_)
+* `@Peace-png <https://github.com/Peace-png>`_
+* Maurizio DE PITTA (`@mdepitta <https://github.com/mdepitta>`_)
+* Sagar Shahari (`@maverick4code <https://github.com/maverick4code>`_)
+* Simo Vanni (`@sivanni <https://github.com/sivanni>`_)
+* hillsberg (`@hillsberg3008 <https://github.com/hillsberg3008>`_)
+* Hong Zhu (`@Jasmine969 <https://github.com/Jasmine969>`_)
+* `@mahipalimkar <https://github.com/mahipalimkar>`_
+* `@wcx12306 <https://github.com/wcx12306>`_
+
+Other contributions outside of GitHub (ordered alphabetically, apologies to
+anyone we forgot...):
+
+* Mathias Cauwet (`@macauwet <https://github.com/macauwet>`_)
+* Chaitanya Chintaluri
+
+Brian 2.9.0
+-----------
+
+New features
+~~~~~~~~~~~~
+- Simulations now stop "gracefully" if you interrupt them with Ctrl+C (or e.g. the interrupt button in a Jupyter notebook). This means that the simulation finishes the current time step and stops, making it possible to access the results for inspection (:issue:`1621`).
+- The :ref:`linked_variables` mechanism is now more powerful and supports linked variables that use another variable for indexing, and linked variables in `Synapses` (:issue:`1584`).
+
+Selected improvements and bug fixes
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+- Improve C99 check on UNIX to avoid spurious errors when a non-standard compiler is used (e.g. via Anaconda) (:issue:`1618`).
+- Raise an error when `~Network.run` is called with a negative duration (:issue:`1608`). Thanks to Palash Chitnavis for contributing this fix.
+- Fix compatibility with recent setuptools versions (:issue:`1590`, :issue:`1622`)
+- Raise an AttributeError instead of a KeyError, when accessing non-existing attributes of the preferences object (:issue:`1629`). This prevents an error on Google Collab when the Debugger is active. Thanks to forum user ``@SaeedF36`` for making us aware of this issue.
+
+Infrastructure and documentation improvements
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+- A new example :doc:`../examples/synapses.homeostatic_stdp_at_inhibitory_synapes`, demonstrating a homoestatic modulation of STDP, based on a population firing rate.
+  Thanks to Paul Brodersen for contributing this example (:issue:`1581`).
+- A new example :doc:`../examples/network_operation_stop`, demonstrating the use of `NetworkOperation` to stop a simulation when a certain condition is met. Thanks to Sagar Shahari for
+  contributing this example (:issue:`1604`).
+- GitHub Actions are now pinned by hash to avoid security issues (:issue:`1607`).
+- A new GitHub Action to update ``CITATION.cff`` and ``README.md`` with the latest Zenodo and Software Heritage links, so that they are always up-to-date with the latest release (:issue:`1574`).
+
+Contributions
+~~~~~~~~~~~~~
+GitHub code, documentation, and issue contributions (ordered by the number of
+contributions):
+
+* Marcel Stimberg (`@mstimberg <https://github.com/mstimberg>`_)
+* Samuele De Cristofaro (`@De-Cri <https://github.com/De-Cri>`_)
+* Dan Goodman (`@thesamovar <https://github.com/thesamovar>`_)
+* Sagar Shahari (`@maverick4code <https://github.com/maverick4code>`_)
+* `@mahipalimkar <https://github.com/mahipalimkar>`_
+* Mrigesh Thakur (`@Legend101Zz <https://github.com/Legend101Zz>`_)
+* Md Khurshid (`@alikhere <https://github.com/alikhere>`_)
+* Palash Chitnavis (`@PalashChitnavis <https://github.com/PalashChitnavis>`_)
+* Ben Evans (`@bdevans <https://github.com/bdevans>`_)
+* `@clinssen <https://github.com/clinssen>`_
+* shriyaise725 (`@shriya7ise <https://github.com/shriya7ise>`_)
+* Ankur Sinha (`@sanjayankur31 <https://github.com/sanjayankur31>`_)
+* Hong Zhu (`@Jasmine969 <https://github.com/Jasmine969>`_)
+* 火焰青年 (`@zhengrenjie <https://github.com/zhengrenjie>`_)
 
 
 Brian 2.8.0.1-2.8.0.4
@@ -45,7 +180,7 @@ Selected improvements and bug fixes
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 - Faster simulation of random numbers (by replacing our outdated random number generator), now up to 5 times faster, speeding up all uses of random numbers
   including noise and Poisson groups/inputs. Note that the random number algorithm behind the scenes is still the same, so simulations will still use the
-  same sequence of random numbers with a given seed, with the limitations given in :ref:`seeding_and_reproducibility` (:issue:`1559`). 
+  same sequence of random numbers with a given seed, with the limitations given in :ref:`seeding_and_reproducibility` (:issue:`1559`).
 - `~CPPStandaloneDevice.delete` has a new option to delete arrays stored on disk for the ``run_args`` feature – this can be useful for training paradigms,
   where the ``run_args`` are used to provide a large array of weights from a previous run.
 - Fixes for compatiblity with recent versions of ``setuptools`` and ``sympy``. Thanks to Étienne Mollier for noticing and fixing a related test failure (:issue:`1553`).
@@ -112,7 +247,7 @@ anyone we forgot...):
 
 Brian 2.7.0
 -----------
-This release contains a number of bug fixes and improvements. Notably, it is fully compatible with the upcoming numpy 2.0 release and can be installed 
+This release contains a number of bug fixes and improvements. Notably, it is fully compatible with the upcoming numpy 2.0 release and can be installed
 alongside either numpy versions 1.23–1.26, or numpy 2.0.
 
 Selected improvements and bug fixes
@@ -164,7 +299,7 @@ New features
 - The new ``run_args`` argument makes it possible to run standalone simulations repeatedly (or in parallel) with different parameters without
   recompiling the code. See :ref:`standalone_multiple_full_runs` for details (:issue:`1429`).
 - We now provide regularly updated Docker images with a full installation of Brian and related tools. You can find the latest release images
-  on https://hub.docker.com/repository/docker/briansimulator/brian/general, and temporary images for development versions on 
+  on https://hub.docker.com/repository/docker/briansimulator/brian/general, and temporary images for development versions on
   https://hub.docker.com/repository/docker/briansimulator/brian-dev/general
   (:issue:`1503`).
 
@@ -174,7 +309,7 @@ Selected improvements and bug fixes
 - Do not assume that the test directory is writeable (:issue:`1507``)
 - Fix the power operator for integer values in Cython (:issue:`1502`). Thanks to Hong Zhu for reporting this issue.
 - Fix floor division on C++ (:issue:`1496`). Thanks to Brian forum user ``ansuz`` for reporting this issue.
-  
+
 Infrastructure and documentation improvements
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 - We now build wheels and test against for Python 3.12 (:issue:`1481`).
@@ -246,7 +381,7 @@ Selected bug fixes
 
 Infrastructure improvements
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
-- Brian's packaging infrastructure now switches to modern tools such as ``pyproject.toml`` for metadata declaration, ``build`` for source package creation, and ``setuptools_scm`` for versioning (:issue:`1475`). 
+- Brian's packaging infrastructure now switches to modern tools such as ``pyproject.toml`` for metadata declaration, ``build`` for source package creation, and ``setuptools_scm`` for versioning (:issue:`1475`).
 
 
 Contributions

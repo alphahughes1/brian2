@@ -17,7 +17,7 @@ from collections import Counter, defaultdict, namedtuple
 from collections.abc import Mapping, Sequence
 
 from brian2.core.base import BrianObject, BrianObjectException
-from brian2.core.clocks import Clock, defaultclock
+from brian2.core.clocks import defaultclock
 from brian2.core.names import Nameable
 from brian2.core.namespace import get_local_namespace
 from brian2.core.preferences import BrianPreference, prefs
@@ -78,7 +78,7 @@ def _format_time(time_in_s):
     letters = ["d", "h", "m", "s"]
     remaining = time_in_s
     text = ""
-    for divisor, letter in zip(divisors, letters):
+    for divisor, letter in zip(divisors, letters, strict=True):
         time_to_represent = int(remaining / divisor)
         remaining -= time_to_represent * divisor
         if time_to_represent > 0 or len(text):
@@ -132,22 +132,26 @@ def _format_table(header, values, cell_formats):
     # table = [header] + values
     table_format = len(values) * [cell_formats]
     col_widths = [
-        max(len(format.format(cell, 0)) for format, cell in zip(col_format, col))
+        max(
+            len(format.format(cell, 0))
+            for format, cell in zip(col_format, col, strict=True)
+        )
         for col_format, col in zip(
-            list(zip(*([len(header) * ["{}"]] + table_format))),
-            list(zip(*([header] + values))),
+            list(zip(*([len(header) * ["{}"]] + table_format), strict=True)),
+            list(zip(*([header] + values), strict=True)),
+            strict=True,
         )
     ]
     line = "-+-".join("-" * width for width in col_widths)
     content = [
         " | ".join(
             format.format(cell, width)
-            for format, cell, width in zip(row_format, row, col_widths)
+            for format, cell, width in zip(row_format, row, col_widths, strict=True)
         )
-        for row_format, row in zip(table_format, values)
+        for row_format, row in zip(table_format, values, strict=True)
     ]
     formatted_header = " | ".join(
-        "{:^{}}".format(h, width) for h, width in zip(header, col_widths)
+        "{:^{}}".format(h, width) for h, width in zip(header, col_widths, strict=True)
     )
 
     return "\n".join([formatted_header, line] + content)
@@ -288,9 +292,7 @@ class SchedulingSummary:
 {rows}
         </tbody>
         </table>
-        """.format(
-            rows="\n".join(rows)
-        )
+        """.format(rows="\n".join(rows))
         return html_code
 
 
@@ -484,6 +486,7 @@ class Network(Nameable):
         return self.get_profiling_info()
 
     _globally_stopped = False
+    _globally_running = False
 
     def __getitem__(self, item):
         if not isinstance(item, str):
@@ -562,11 +565,11 @@ class Network(Nameable):
                             if o is obj:
                                 raise TypeError()
                             self.add(o)
-                    except TypeError:
+                    except TypeError as ex:
                         raise TypeError(
                             "Can only add objects of type BrianObject, "
                             "or containers of such objects to Network"
-                        )
+                        ) from ex
 
     def remove(self, *objs):
         """
@@ -587,12 +590,12 @@ class Network(Nameable):
                 try:
                     for o in obj:
                         self.remove(o)
-                except TypeError:
+                except TypeError as ex:
                     raise TypeError(
                         "Can only remove objects of type "
                         "BrianObject, or containers of such "
                         "objects from Network"
-                    )
+                    ) from ex
 
     def _full_state(self):
         all_objects = _get_all_objects(self.objects)
@@ -1019,7 +1022,7 @@ class Network(Nameable):
                     "creating a new one."
                 )
 
-        clocknames = ", ".join(f"{obj.name} (dt={obj.dt})" for obj in self._clocks)
+        clocknames = ", ".join(f"{obj.name}" for obj in self._clocks)
         logger.debug(
             f"Network '{self.name}' uses {len(self._clocks)} clocks: {clocknames}",
             "before_run",
@@ -1035,19 +1038,10 @@ class Network(Nameable):
                 obj.after_run()
 
     def _nextclocks(self):
-        clocks_times_dt = [
-            (c, self._clock_variables[c][1][0], self._clock_variables[c][2][0])
-            for c in self._clocks
-        ]
-        minclock, min_time, minclock_dt = min(clocks_times_dt, key=lambda k: k[1])
-        curclocks = {
-            clock
-            for clock, time, dt in clocks_times_dt
-            if (
-                time == min_time
-                or abs(time - min_time) / min(minclock_dt, dt) < Clock.epsilon_dt
-            )
-        }
+        minclock = min(self._clocks, key=lambda c: c.variables["t"].get_value().item())
+
+        curclocks = {clock for clock in self._clocks if clock.same_time(minclock)}
+
         return minclock, curclocks
 
     @device_override("network_run")
@@ -1102,7 +1096,16 @@ class Network(Nameable):
         -----
         The simulation can be stopped by calling `Network.stop` or the
         global `stop` function.
+
+        Raises
+        ------
+        ValueError
+            Error raised when duration passed in run function is negative.
         """
+        if duration < 0:
+            raise ValueError(
+                f"Function 'run' expected a non-negative duration but got '{duration}'"
+            )
         # This will trigger warnings for objects that have not been included in a network
         gc.collect()
         device = get_device()  # Do not use the ProxyDevice -- slightly faster
@@ -1127,7 +1130,6 @@ class Network(Nameable):
                 c: (
                     c.variables["timestep"].get_value(),
                     c.variables["t"].get_value(),
-                    c.variables["dt"].get_value(),
                 )
                 for c in self._clocks
             }
@@ -1174,23 +1176,24 @@ class Network(Nameable):
         profiling_info = defaultdict(float)
 
         if single_clock:
-            timestep, t, dt = (
+            timestep, t = (
                 clock.variables["timestep"].get_value(),
                 clock.variables["t"].get_value(),
-                clock.variables["dt"].get_value(),
             )
+
         else:
             # Find the first clock to be updated (see note below)
             clock, curclocks = self._nextclocks()
-            timestep, _, _ = self._clock_variables[clock]
+            timestep, t = self._clock_variables[clock]
 
         running = timestep[0] < clock._i_end
 
         active_objects = [obj for obj in all_objects if obj.active]
 
+        Network._globally_running = True
         while running and not self._stopped and not Network._globally_stopped:
             if not single_clock:
-                timestep, t, dt = self._clock_variables[clock]
+                timestep, t = self._clock_variables[clock]
             # update the network time to this clock's time
             self.t_ = t[0]
             if report is not None:
@@ -1215,8 +1218,8 @@ class Network(Nameable):
                     for obj in active_objects:
                         obj.run()
 
-                timestep[0] += 1
-                t[0] = timestep[0] * dt[0]
+                clock.advance()
+
             else:
                 if profile:
                     for obj in active_objects:
@@ -1230,15 +1233,13 @@ class Network(Nameable):
                             obj.run()
 
                 for c in curclocks:
-                    timestep, t, dt = self._clock_variables[c]
-                    timestep[0] += 1
-                    t[0] = timestep[0] * dt[0]
+                    c.advance()
                 # find the next clocks to be updated. The < operator for Clock
                 # determines that the first clock to be updated should be the one
                 # with the smallest t value, unless there are several with the
                 # same t value in which case we update all of them
                 clock, curclocks = self._nextclocks()
-                timestep, _, _ = self._clock_variables[clock]
+                timestep, t = self._clock_variables[clock]
 
             if (
                 device._maximum_run_time is not None
@@ -1249,6 +1250,7 @@ class Network(Nameable):
                 running = timestep[0] < clock._i_end
 
         end_time = time.time()
+        Network._globally_running = False
         if self._stopped or Network._globally_stopped:
             self.t_ = clock.t_
         else:
@@ -1266,12 +1268,17 @@ class Network(Nameable):
                 obj._check_for_invalid_states()
 
         if report is not None:
-            report_callback((end_time - start_time) * second, 1.0, t_start, duration)
+            report_callback(
+                (end_time - start_time) * second,
+                device._last_run_completed_fraction,
+                t_start,
+                duration,
+            )
         self.after_run()
 
         logger.debug(
             f"Finished simulating network '{self.name}' "
-            f"(took {end_time-start_time:.2f}s)",
+            f"(took {end_time - start_time:.2f}s)",
             "run",
         )
         # Store profiling info (or erase old info to avoid confusion)
@@ -1323,7 +1330,7 @@ class ProfilingSummary:
     def __init__(self, net, show=None):
         prof = net.profiling_info
         if len(prof):
-            names, times = list(zip(*prof))
+            names, times = list(zip(*prof, strict=True))
         else:  # Can happen if a network has been run for 0ms
             # Use a dummy entry to prevent problems with empty lists later
             names = ["no code objects have been run"]
@@ -1356,7 +1363,7 @@ class ProfilingSummary:
 
         s = "Profiling summary"
         s += f"\n{'=' * len(s)}\n"
-        for name, t, percentage in zip(self.names, times, percentages):
+        for name, t, percentage in zip(self.names, times, percentages, strict=True):
             s += f"{name}    {t}    {percentage}\n"
         return s
 
@@ -1365,7 +1372,7 @@ class ProfilingSummary:
         percentages = [f"{percentage:.2f} %" for percentage in self.percentages]
         s = '<h2 class="brian_prof_summary_header">Profiling summary</h2>\n'
         s += '<table class="brian_prof_summary_table">\n'
-        for name, t, percentage in zip(self.names, times, percentages):
+        for name, t, percentage in zip(self.names, times, percentages, strict=True):
             s += "<tr>"
             s += f"<td>{name}</td>"
             s += f'<td style="text-align: right">{t}</td>'

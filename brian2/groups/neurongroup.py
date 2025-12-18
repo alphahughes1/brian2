@@ -47,7 +47,7 @@ logger = get_logger(__name__)
 
 IDENTIFIER = Word(
     f"{string.ascii_letters}_", f"{string.ascii_letters + string.digits}_"
-).setResultsName("identifier")
+).set_results_name("identifier")
 
 
 def _valid_event_name(event_name):
@@ -64,7 +64,7 @@ def _valid_event_name(event_name):
     is_valid : bool
         Whether the given name is valid
     """
-    parse_result = list(IDENTIFIER.scanString(event_name))
+    parse_result = list(IDENTIFIER.scan_string(event_name))
 
     # parse_result[0][0][0] refers to the matched string -- this should be the
     # full identifier, if not it is an illegal identifier like "3foo" which only
@@ -550,7 +550,7 @@ class NeuronGroup(Group, SpikeSource):
             if isinstance(N, str):
                 raise TypeError(
                     "First NeuronGroup argument should be size, not equations."
-                )
+                ) from None
             raise
         if N < 1:
             raise ValueError(f"NeuronGroup size should be at least 1, was {str(N)}")
@@ -710,7 +710,9 @@ class NeuronGroup(Group, SpikeSource):
             return Group.state(self, name, use_units=use_units, level=level + 1)
         except KeyError as ex:
             if name in self._linked_variables:
-                raise TypeError(f"Link target for variable {name} has not been set.")
+                raise TypeError(
+                    f"Link target for variable {name} has not been set."
+                ) from ex
             else:
                 raise ex
 

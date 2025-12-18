@@ -232,18 +232,20 @@ class ExplicitStateUpdater(StateUpdateMethod):
     #: Legal names for temporary variables
     TEMP_VAR = ~Literal("x_new") + Word(
         f"{string.ascii_letters}_", f"{string.ascii_letters + string.digits}_"
-    ).setResultsName("identifier")
+    ).set_results_name("identifier")
 
     #: A single expression
-    EXPRESSION = restOfLine.setResultsName("expression")
+    EXPRESSION = restOfLine.set_results_name("expression")
 
     #: An assignment statement
-    STATEMENT = Group(TEMP_VAR + Suppress("=") + EXPRESSION).setResultsName("statement")
+    STATEMENT = Group(TEMP_VAR + Suppress("=") + EXPRESSION).set_results_name(
+        "statement"
+    )
 
     #: The last line of a state updater description
     OUTPUT = Group(
         Suppress(Literal("x_new")) + Suppress("=") + EXPRESSION
-    ).setResultsName("output")
+    ).set_results_name("output")
 
     #: A complete state updater description
     DESCRIPTION = ZeroOrMore(STATEMENT) + OUTPUT
@@ -254,15 +256,15 @@ class ExplicitStateUpdater(StateUpdateMethod):
         self.custom_check = custom_check
 
         try:
-            parsed = ExplicitStateUpdater.DESCRIPTION.parseString(
-                description, parseAll=True
+            parsed = ExplicitStateUpdater.DESCRIPTION.parse_string(
+                description, parse_all=True
             )
         except ParseException as p_exc:
-            ex = SyntaxError(f"Parsing failed: {str(p_exc.msg)}")
+            ex = SyntaxError("Parsing failed.")
             ex.text = str(p_exc.line)
             ex.offset = p_exc.column
             ex.lineno = p_exc.lineno
-            raise ex
+            raise ex from p_exc
 
         self.statements = []
         self.symbols = SYMBOLS.copy()
@@ -279,7 +281,7 @@ class ExplicitStateUpdater(StateUpdateMethod):
                     unique_symbols.append(symbol)
                 else:
                     unique_symbols.append(_symbol(f"__{symbol.name}"))
-            for symbol, unique_symbol in zip(symbols, unique_symbols):
+            for symbol, unique_symbol in zip(symbols, unique_symbols, strict=True):
                 expression = expression.subs(symbol, unique_symbol)
 
             self.symbols.update({symbol.name: symbol for symbol in unique_symbols})
@@ -349,7 +351,7 @@ class ExplicitStateUpdater(StateUpdateMethod):
         try:
             s_expr = str_to_sympy(str(expr))
         except SympifyError as ex:
-            raise ValueError(f'Error parsing the expression "{expr}": {str(ex)}')
+            raise ValueError(f'Error parsing the expression "{expr}"') from ex
 
         for var in eq_symbols:
             # Generate specific temporary variables for the state variable,
@@ -505,8 +507,13 @@ class ExplicitStateUpdater(StateUpdateMethod):
         else:
             for xi in stochastic_variable:
                 # Replace the g(x, t) part
-                replace_f = lambda x, t: self.replace_func(
-                    x, t, stochastic.get(xi, 0), temp_vars, eq_symbols, xi  # noqa: B023
+                replace_f = lambda x, t, xi=xi: self.replace_func(
+                    x,
+                    t,
+                    stochastic.get(xi, 0),
+                    temp_vars,
+                    eq_symbols,
+                    xi,
                 )
                 stochastic_result = stochastic_expr.replace(
                     self.symbols["__g"], replace_f

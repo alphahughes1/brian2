@@ -1,14 +1,13 @@
 # cython: language_level = 3
 # distutils: language = c++
-# distutils: sources = brian2/synapses/cspikequeue.cpp
 
 from libcpp.vector cimport vector
 from libcpp.pair cimport pair
 from libcpp.string cimport string
-
 import cython
 from cython.operator import dereference
 from cython.operator cimport dereference
+from cpython.pycapsule cimport PyCapsule_New
 
 cimport numpy as np
 import numpy as np
@@ -27,7 +26,7 @@ ctypedef fused float_array:
     np.ndarray[double, ndim=1, mode='c']
     np.ndarray[float, ndim=1, mode='c']
 
-cdef extern from "cspikequeue.cpp":
+cdef extern from "spikequeue.h":
     cdef cppclass CSpikeQueue:
         CSpikeQueue(int, int) except +
         void prepare[scalar](scalar*, int, int32_t*, int, double)
@@ -53,6 +52,15 @@ cdef class SpikeQueue:
 
     def _full_state(self):
         return self.thisptr._full_state()
+
+    def get_capsule(self):
+        """
+        Returns a PyCapsule object wrapping the underlying C++ CSpikeQueue pointer.
+
+        PyCapsules are used to safely pass raw C/C++ pointers between Python modules
+        or C extensions without exposing the actual implementation details to Python.
+        """
+        return PyCapsule_New(<void*>self.thisptr, "CSpikeQueue", NULL)
 
     cdef object __weakref__  # Allows weak references to the SpikeQueue
 

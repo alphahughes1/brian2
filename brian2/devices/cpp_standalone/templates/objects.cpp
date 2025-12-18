@@ -20,6 +20,7 @@ set_variable_from_value(name, {{array_name}}, var_size, (char)atoi(s_value.c_str
 #include "brianlib/dynamic_array.h"
 #include "brianlib/stdint_compat.h"
 #include "network.h"
+#include<chrono>
 #include<random>
 #include<vector>
 #include<iostream>
@@ -33,10 +34,18 @@ namespace brian {
 
 std::string results_dir = "results/";  // can be overwritten by --results_dir command line arg
 
-// For multhreading, we need one generator for each thread. We also create a distribution for
-// each thread, even though this is not strictly necessary for the uniform distribution, as
-// the distribution is stateless.
+// For multhreading, we need one generator for each thread.
 std::vector< RandomGenerator > _random_generators;
+
+std::ostream& operator<<(std::ostream& out, const RandomGenerator& rng)
+{
+    return out << rng.gen;
+}
+
+std::istream& operator>>(std::istream& in, RandomGenerator& rng)
+{
+    return in >> rng.gen;
+}
 
 //////////////// networks /////////////////
 {% for net in networks | sort(attribute='name') %}
@@ -177,14 +186,19 @@ SynapticPathway {{path.name}}(
 {% endfor %}
 
 //////////////// clocks ///////////////////
+// attributes will be set in run.cpp
 {% for clock in clocks | sort(attribute='name') %}
-Clock {{clock.name}};  // attributes will be set in run.cpp
+{% if clock.__class__.__name__ == "EventClock" %}
+EventClock {{clock.name}};
+{% else %}
+Clock {{clock.name}};
+{% endif %}
 {% endfor %}
 
 {% if profiled_codeobjects is defined %}
 // Profiling information for each code object
 {% for codeobj in profiled_codeobjects | sort %}
-double {{codeobj}}_profiling_info = 0.0;
+std::chrono::nanoseconds {{codeobj}}_profiling_info(0);
 {% endfor %}
 {% endif %}
 }
@@ -306,6 +320,32 @@ void _write_arrays()
         std::cout << "Error writing output file for {{varname}}." << endl;
     }
     {% endfor %}
+
+    // Write spike queue states to disk
+    {% for S in synapses | sort(attribute='name') %}
+    {% for path in S._pathways | sort(attribute='name') %}
+    ofstream outfile_{{path.name}};
+    outfile_{{path.name}}.open(results_dir + "{{path.name}}_queue", ios::out);
+    if (outfile_{{path.name}}.is_open()) {
+        for (int i=0; i<{{openmp_pragma('get_num_threads')}}; i++) {
+            outfile_{{path.name}} << *{{path.name}}.queue[i] << "\n";
+        }
+    } else {
+        std::cout << "Error writing spike queue state for '{{path.name}}' for file" << std::endl;
+    }
+    {% endfor %}
+    {% endfor %}
+
+    // Write random generator state to disk
+    ofstream random_generator_state;
+    random_generator_state.open(results_dir + "random_generator_state", ios::out);
+    if (random_generator_state.is_open()) {
+        for (int i=0; i<{{openmp_pragma('get_num_threads')}}; i++)
+            random_generator_state << _random_generators[i] << "\n";
+    } else {
+        std::cout << "Error writing random generator state to file." << std::endl;
+    }
+
     {% if profiled_codeobjects is defined and profiled_codeobjects %}
     // Write profiling info to disk
     ofstream outfile_profiling_info;
@@ -313,7 +353,7 @@ void _write_arrays()
     if(outfile_profiling_info.is_open())
     {
     {% for codeobj in profiled_codeobjects | sort %}
-    outfile_profiling_info << "{{codeobj}}\t" << {{codeobj}}_profiling_info << std::endl;
+    outfile_profiling_info << "{{codeobj}}\t" << std::chrono::duration<double>({{codeobj}}_profiling_info).count() << std::endl;
     {% endfor %}
     outfile_profiling_info.close();
     } else
@@ -374,6 +414,7 @@ void _dealloc_arrays()
 #include "brianlib/dynamic_array.h"
 #include "brianlib/stdint_compat.h"
 #include "network.h"
+#include<chrono>
 #include<random>
 #include<vector>
 {{ openmp_pragma('include') }}
@@ -400,6 +441,10 @@ class RandomGenerator {
             gen.seed(seed);
             has_stored_gauss = false;
         }
+        // Allow exporting/setting the internal state of the random generator
+        friend std::ostream& operator<<(std::ostream& out, const RandomGenerator& rng);
+        friend std::istream& operator>>(std::istream& in, RandomGenerator& rng);
+
         double rand() {
             /* shifts : 67108864 = 0x4000000, 9007199254740992 = 0x20000000000000 */
             const long a = gen() >> 5;
@@ -433,12 +478,19 @@ class RandomGenerator {
         }
 };
 
+extern std::ostream& operator<<(std::ostream& out, const RandomGenerator& rng);
+extern std::istream& operator>>(std::istream& in, RandomGenerator& rng);
+
 // In OpenMP we need one state per thread
 extern std::vector< RandomGenerator > _random_generators;
 
 //////////////// clocks ///////////////////
 {% for clock in clocks | sort(attribute='name') %}
+{% if clock.__class__.__name__ == "EventClock" %}
+extern EventClock {{clock.name}};
+{% else %}
 extern Clock {{clock.name}};
+{% endif %}
 {% endfor %}
 
 //////////////// networks /////////////////
@@ -488,7 +540,7 @@ extern SynapticPathway {{path.name}};
 {% if profiled_codeobjects is defined %}
 // Profiling information for each code object
 {% for codeobj in profiled_codeobjects | sort %}
-extern double {{codeobj}}_profiling_info;
+extern std::chrono::nanoseconds {{codeobj}}_profiling_info;
 {% endfor %}
 {% endif %}
 }

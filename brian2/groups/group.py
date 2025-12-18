@@ -419,8 +419,8 @@ class VariableOwner(Nameable):
                 use_units = True
             return self.state(name, use_units)
 
-        except KeyError:
-            raise AttributeError(f"No attribute with name {name}")
+        except KeyError as ex:
+            raise AttributeError(f"No attribute with name {name}") from ex
 
     def __setattr__(self, key, value, level=0):
         # attribute access is switched off until this attribute is created by
@@ -598,7 +598,7 @@ class VariableOwner(Nameable):
             except TypeError:
                 raise TypeError(
                     "The index for a linked variable has to be an integer array"
-                )
+                ) from None
             size = len(index_array)
             source_index = linked_var.group.variables.indices[linked_var.name]
             if source_index not in ("_idx", "0"):
@@ -990,7 +990,7 @@ class Group(VariableOwner, BrianObject):
                 if (
                     isinstance(
                         match,
-                        (numbers.Number, np.ndarray, np.number, Function, Variable),
+                        (numbers.Number, np.ndarray, np.generic, Function, Variable),
                     )
                 ) or (
                     inspect.isfunction(match)
@@ -1169,12 +1169,60 @@ class Group(VariableOwner, BrianObject):
         obj : `CodeRunner`
             A reference to the object that will be run.
         """
+        from brian2.core.clocks import Clock  # Avoid circular import
+
         if name is None:
             names = [o.name for o in self.contained_objects]
             name = find_name(f"{self.name}_run_regularly*", names)
 
         if dt is None and clock is None:
             clock = self._clock
+        elif clock is None:
+            clock = Clock(dt=dt, name=f"{name}_clock*")
+
+        return self.run_on_clock(code, clock, when, order, name, codeobj_class)
+
+    def run_on_clock(
+        self,
+        code,
+        clock=None,
+        when="start",
+        order=0,
+        name=None,
+        codeobj_class=None,
+    ):
+        """
+        This method is used by `run_regularly` and `run_at` to register operations
+        that are executed at times determined by a user-supplied or internally generated `Clock`.
+        The resulting `CodeRunner` is automatically added to the group.
+
+        Parameters
+        ----------
+        code : str
+            The abstract code to run.
+        clock : `Clock`, optional
+            The update clock to use for this operation. If neither a clock nor
+            the `dt` argument is specified, defaults to the clock of the group.
+        when : str, optional
+            When to run within a time step, defaults to the ``'start'`` slot.
+            See :ref:`scheduling` for possible values.
+        name : str, optional
+            A unique name, if non is given the name of the group appended with
+            'run_custom_clock', 'run_custom_clock_1', etc. will be used. If a
+            name is given explicitly, it will be used as given (i.e. the group
+            name will not be prepended automatically).
+        codeobj_class : class, optional
+            The `CodeObject` class to run code with. If not specified, defaults
+            to the `group`'s ``codeobj_class`` attribute.
+
+        Returns
+        -------
+        obj : `CodeRunner`
+            A reference to the object that will be run.
+        """
+        if name is None:
+            names = [o.name for o in self.contained_objects]
+            name = find_name(f"{self.name}_run_custom*", names)
 
         # Subgroups are normally not included in their parent's
         # contained_objects list, since there's no need to include them in the
@@ -1195,7 +1243,6 @@ class Group(VariableOwner, BrianObject):
             "stateupdate",
             code=code,
             name=name,
-            dt=dt,
             clock=clock,
             when=when,
             order=order,
@@ -1203,6 +1250,53 @@ class Group(VariableOwner, BrianObject):
         )
         self.contained_objects.append(runner)
         return runner
+
+    def run_at(
+        self,
+        code,
+        times,
+        when="start",
+        order=0,
+        name=None,
+        codeobj_class=None,
+    ):
+        """
+        Run abstract code in the group's namespace. The created `CodeRunner`
+        object will be automatically added to the group, it therefore does not
+        need to be added to the network manually. However, a reference to the
+        object will be returned, which can be used to later remove it from the
+        group or to set it to inactive.
+
+        Parameters
+        ----------
+        code : str
+            The abstract code to run.
+        times : array-like
+            The specific simulation times at which to execute the code.
+        when : str, optional
+            When to run within a time step, defaults to the ``'start'`` slot.
+            See :ref:`scheduling` for possible values.
+        name : str, optional
+            A unique name, if non is given the name of the group appended with
+            'run_at', 'run_at_1', etc. will be used. If a
+            name is given explicitly, it will be used as given (i.e. the group
+            name will not be prepended automatically).
+        codeobj_class : class, optional
+            The `CodeObject` class to run code with. If not specified, defaults
+            to the `group`'s ``codeobj_class`` attribute.
+
+        Returns
+        -------
+        obj : `CodeRunner`
+            A reference to the object that will be run.
+        """
+        if name is None:
+            names = [o.name for o in self.contained_objects]
+            name = find_name(f"{self.name}_run_at*", names)
+        from brian2.core.clocks import EventClock
+
+        clock = EventClock(times, name=f"{name}_eventclock*")
+        return self.run_on_clock(code, clock, when, order, name, codeobj_class)
 
     def _check_for_invalid_states(self):
         """
